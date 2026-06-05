@@ -610,8 +610,10 @@ private:
         uint32 links   = pcm->getQPILinksPerSocket();
         for ( uint32 i=0; i < sockets; ++i ) {
             startObject( std::string( "QPI Counters Socket " ) + std::to_string( i ), BEGIN_OBJECT );
+            printCounter( std::string( "CXL Read Cache"  ), getCXLReadCacheBytes    (i,  before, after ) );
             printCounter( std::string( "CXL Write Cache" ), getCXLWriteCacheBytes   (i,  before, after ) );
-            printCounter( std::string( "CXL Write Mem"   ), getCXLWriteMemBytes     (i,  before, after ) );
+            printCounter( std::string( "CXL Read Mem"   ), getCXLReadMemBytes       (i,  before, after ) );
+            printCounter( std::string( "CXL Write Mem"  ), getCXLWriteMemBytes      (i,  before, after ) );
 
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ), getIncomingQPILinkBytes      ( i, j, before, after ) );
@@ -770,7 +772,12 @@ public:
             printComment( "Accelerator Counters" );
             printAccelCounterState(before,after);
         }
-        if ( pcm->isServerCPU() && pcm->getNumSockets() >= 2 ) {
+        bool hasCXLPorts = false;
+        for ( uint32 socket = 0; socket < pcm->getNumSockets(); ++socket )
+        {
+            hasCXLPorts = hasCXLPorts || (pcm->getNumCXLPorts(socket) > 0);
+        }
+        if ( pcm->isServerCPU() && (pcm->getNumSockets() >= 2 || hasCXLPorts) ) {
             printComment( "UPI/QPI Counters" );
             printSystemCounterState( before, after );
         }
@@ -938,7 +945,9 @@ private:
         uint32 links   = pcm->getQPILinksPerSocket();
         for ( uint32 i=0; i < sockets; ++i ) {
             addToHierarchy( std::string( "socket=\"" ) + std::to_string( i ) + "\"" );
+            printCounter( std::string( "CXL Read Cache"  ), getCXLReadCacheBytes    (i,  before, after ) );
             printCounter( std::string( "CXL Write Cache" ), getCXLWriteCacheBytes   (i,  before, after ) );
+            printCounter( std::string( "CXL Read Mem"    ), getCXLReadMemBytes      (i,  before, after ) );
             printCounter( std::string( "CXL Write Mem"   ), getCXLWriteMemBytes     (i,  before, after ) );
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ),                          getIncomingQPILinkBytes      ( i, j, before, after ) );
