@@ -447,7 +447,7 @@ void printSocketBWFooter(PCM *m, uint32 no_columns, uint32 skt, const memdata_t 
     cout << "\n";
 }
 
-void display_bandwidth(PCM *m, memdata_t *md, const uint32 no_columns, const bool show_channel_output, const bool print_update, const float CXL_Read_BW, const bool show_cxl_bandwidth)
+void display_bandwidth(PCM *m, memdata_t *md, const uint32 no_columns, const bool show_channel_output, const bool print_update, const float CXL_Read_BW, const float CXL_Write_BW, const bool show_cxl_bandwidth)
 {
     float sysReadDRAM = 0.0, sysWriteDRAM = 0.0, sysReadPMM = 0.0, sysWritePMM = 0.0;
     uint32 numSockets = m->getNumSockets();
@@ -580,7 +580,8 @@ void display_bandwidth(PCM *m, memdata_t *md, const uint32 no_columns, const boo
         if (SPR_CXL)
         {
             cout << "\
-            \r|--             System CXL Read Throughput(MB/s):" << setw(14) << CXL_Read_BW << "                --|\n";
+            \r|--             System CXL Read Throughput(MB/s):" << setw(14) << CXL_Read_BW << "                --|\n\
+            \r|--            System CXL Write Throughput(MB/s):" << setw(14) << CXL_Write_BW << "                --|\n";
         }
         cout << "\
             \r|--                 System Read Throughput(MB/s):" << setw(14) << sysReadDRAM+sysReadPMM <<                          "                --|\n\
@@ -592,7 +593,7 @@ void display_bandwidth(PCM *m, memdata_t *md, const uint32 no_columns, const boo
 
 constexpr float CXLBWWrScalingFactor = 0.5;
 
-void display_bandwidth_csv(PCM *m, memdata_t *md, uint64 /*elapsedTime*/, const bool show_channel_output, const CsvOutputType outputType, const float CXL_Read_BW, const bool show_cxl_output)
+void display_bandwidth_csv(PCM *m, memdata_t *md, uint64 /*elapsedTime*/, const bool show_channel_output, const CsvOutputType outputType, const float CXL_Read_BW, const float CXL_Write_BW, const bool show_cxl_output)
 {
     const uint32 numSockets = m->getNumSockets();
     printDateForCSV(outputType);
@@ -876,13 +877,14 @@ void display_bandwidth_csv(PCM *m, memdata_t *md, uint64 /*elapsedTime*/, const 
     {
         choose(outputType,
             []() {
-                cout << "System,";
+                cout << "System,System,";
             },
             []() {
-                cout << "CXLRead,";
+                cout << "CXLRead,CXLWrite,";
             },
                 [&]() {
-                cout << setw(10) << CXL_Read_BW << ',';
+                cout << setw(10) << CXL_Read_BW << ','
+                     << setw(10) << CXL_Write_BW << ',';
             });
     }
 
@@ -1158,21 +1160,30 @@ void calculate_bandwidth(PCM *m,
         }
     }
 
+    float CXL_Write_BW = 0.0;
+    for (uint32 skt = 0; skt < m->getNumSockets(); ++skt)
+    {
+        for (size_t p = 0; p < m->getNumCXLPorts(skt); ++p)
+        {
+            CXL_Write_BW += md.CXLMEM_Wr_socket_port[skt][p] + md.CXLCACHE_Wr_socket_port[skt][p];
+        }
+    }
+
     const auto CXL_Read_BW = toBW(SPR_CHA_CXL_Count);
 
     if (csv)
     {
         if (csvheader)
         {
-            display_bandwidth_csv(m, &md, elapsedTime, show_channel_output, Header1, CXL_Read_BW, show_cxl_output);
-            display_bandwidth_csv(m, &md, elapsedTime, show_channel_output, Header2, CXL_Read_BW, show_cxl_output);
+            display_bandwidth_csv(m, &md, elapsedTime, show_channel_output, Header1, CXL_Read_BW, CXL_Write_BW, show_cxl_output);
+            display_bandwidth_csv(m, &md, elapsedTime, show_channel_output, Header2, CXL_Read_BW, CXL_Write_BW, show_cxl_output);
             csvheader = false;
         }
-        display_bandwidth_csv(m, &md, elapsedTime, show_channel_output, Data, CXL_Read_BW, show_cxl_output);
+        display_bandwidth_csv(m, &md, elapsedTime, show_channel_output, Data, CXL_Read_BW, CXL_Write_BW, show_cxl_output);
     }
     else
     {
-        display_bandwidth(m, &md, no_columns, show_channel_output, print_update, CXL_Read_BW, show_cxl_output);
+        display_bandwidth(m, &md, no_columns, show_channel_output, print_update, CXL_Read_BW, CXL_Write_BW, show_cxl_output);
     }
 }
 

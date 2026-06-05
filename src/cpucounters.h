@@ -4091,7 +4091,8 @@ public:
     typedef std::map<std::pair<h_id,v_id>,uint64_t> ctr_data;
     typedef std::vector<ctr_data> dev_content;
     std::vector<SimpleCounterState> accel_counters;
-    std::vector<uint64> CXLWriteMem,CXLWriteCache;
+    std::vector<uint64> CXLReadMem, CXLWriteMem, CXLReadCache, CXLWriteCache;
+    std::vector<std::vector<uint64> > CXLPortReadMem, CXLPortWriteMem, CXLPortReadCache, CXLPortWriteCache;
     friend uint64 getIncomingQPILinkBytes(uint32 socketNr, uint32 linkNr, const SystemCounterState & before, const SystemCounterState & after);
     friend uint64 getIncomingQPILinkBytes(uint32 socketNr, uint32 linkNr, const SystemCounterState & now);
     friend double getOutgoingQPILinkUtilization(uint32 socketNr, uint32 linkNr, const SystemCounterState & before, const SystemCounterState & after);
@@ -4104,8 +4105,21 @@ public:
     {
         PCM * m = PCM::getInstance();
         accel_counters.resize(m->getNumberofAccelCounters());
+        CXLReadMem.resize(m->getNumSockets(),0);
         CXLWriteMem.resize(m->getNumSockets(),0);
+        CXLReadCache.resize(m->getNumSockets(),0);
         CXLWriteCache.resize(m->getNumSockets(),0);
+        CXLPortReadMem.resize(m->getNumSockets());
+        CXLPortWriteMem.resize(m->getNumSockets());
+        CXLPortReadCache.resize(m->getNumSockets());
+        CXLPortWriteCache.resize(m->getNumSockets());
+        for (size_t socket = 0; socket < m->getNumSockets(); ++socket)
+        {
+            CXLPortReadMem[socket].resize(m->getNumCXLPorts(socket), 0);
+            CXLPortWriteMem[socket].resize(m->getNumCXLPorts(socket), 0);
+            CXLPortReadCache[socket].resize(m->getNumCXLPorts(socket), 0);
+            CXLPortWriteCache[socket].resize(m->getNumCXLPorts(socket), 0);
+        }
         incomingQPIPackets.resize(m->getNumSockets(),
                                   std::vector<uint64>((uint32)m->getQPILinksPerSocket(), 0));
         outgoingQPIFlits.resize(m->getNumSockets(),
@@ -4990,6 +5004,17 @@ uint64 getNumberOfCustomEvents(int32 eventCounterNr, const CounterStateType & be
     return after.Event[eventCounterNr] - before.Event[eventCounterNr];
 }
 
+/*! \brief Computes number of bytes Read from CXL Cache
+
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLReadCacheBytes(uint32 socket,const SystemCounterState & before,const SystemCounterState & after)
+{
+    return (after.CXLReadCache[socket] - before.CXLReadCache[socket]) * 64;
+}
 
 /*! \brief Computes number of bytes Writen from CXL Cache
 
@@ -5003,6 +5028,19 @@ inline uint64 getCXLWriteCacheBytes(uint32 socket,const SystemCounterState & bef
         return (after.CXLWriteCache[socket] - before.CXLWriteCache[socket]) * 64;
 }
 
+/*! \brief Computes number of bytes Read from CXL Memory
+
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLReadMemBytes(uint32 socket, const SystemCounterState & before,const SystemCounterState & after)
+{
+
+    return (after.CXLReadMem[socket] - before.CXLReadMem[socket]) * 64;
+}
+
 /*! \brief Computes number of bytes Writen from CXL Memory
 
     \param before CPU counter state before the experiment
@@ -5014,6 +5052,62 @@ inline uint64 getCXLWriteMemBytes(uint32 socket, const SystemCounterState & befo
 {
 
         return (after.CXLWriteMem[socket] - before.CXLWriteMem[socket]) * 64;
+}
+
+/*! \brief Computes number of bytes Read from CXL Cache on a specific CXL port
+
+    \param socket socket identifier
+    \param port CXL port identifier within the socket
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLPortReadCacheBytes(uint32 socket, uint32 port, const SystemCounterState & before,const SystemCounterState & after)
+{
+    return (after.CXLPortReadCache[socket][port] - before.CXLPortReadCache[socket][port]) * 64;
+}
+
+/*! \brief Computes number of bytes Written from CXL Cache on specific a CXL port
+
+    \param socket socket identifier
+    \param port CXL port identifier within the socket
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLPortWriteCacheBytes(uint32 socket, uint32 port, const SystemCounterState & before,const SystemCounterState & after)
+{
+    return (after.CXLPortWriteCache[socket][port] - before.CXLPortWriteCache[socket][port]) * 64;
+}
+
+/*! \brief Computes number of bytes Read from CXL Memory on specific a CXL port
+
+    \param socket socket identifier
+    \param port CXL port identifier within the socket
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLPortReadMemBytes(uint32 socket, uint32 port, const SystemCounterState & before,const SystemCounterState & after)
+{
+    return (after.CXLPortReadMem[socket][port] - before.CXLPortReadMem[socket][port]) * 64;
+}
+
+/*! \brief Computes number of bytes Written from CXL Memory on specific a CXL port
+
+    \param socket socket identifier
+    \param port CXL port identifier within the socket
+    \param before CPU counter state before the experiment
+    \param after CPU counter state after the experiment
+    \return Number of bytes
+*/
+//template <class CounterStateType>
+inline uint64 getCXLPortWriteMemBytes(uint32 socket, uint32 port, const SystemCounterState & before,const SystemCounterState & after)
+{
+    return (after.CXLPortWriteMem[socket][port] - before.CXLPortWriteMem[socket][port]) * 64;
 }
 
 /*! \brief Get estimation of QPI data traffic per incoming QPI link

@@ -6672,14 +6672,30 @@ void PCM::readAndAggregateCXLCMCounters( CounterStateType & result)
 
     for (size_t socket = 0; socket < getNumSockets(); ++socket)
     {
+        uint64 CXLReadMem = 0;
         uint64 CXLWriteMem = 0;
+        uint64 CXLReadCache = 0;
         uint64 CXLWriteCache = 0;
         for (size_t p = 0; p < getNumCXLPorts(socket); ++p)
         {
-            CXLWriteMem += *cxlPMUs[socket][p].first.counterValue[0];
-            CXLWriteCache += *cxlPMUs[socket][p].first.counterValue[1];
+            const uint64 readMem = *cxlPMUs[socket][p].first.counterValue[EventPosition::CXL_RxC_MEM];
+            const uint64 writeMem = *cxlPMUs[socket][p].first.counterValue[EventPosition::CXL_TxC_MEM];
+            const uint64 readCache = *cxlPMUs[socket][p].first.counterValue[EventPosition::CXL_RxC_CACHE];
+            const uint64 writeCache = *cxlPMUs[socket][p].first.counterValue[EventPosition::CXL_TxC_CACHE];
+
+            CXLReadMem += readMem;
+            CXLWriteMem += writeMem;
+            CXLReadCache += readCache;
+            CXLWriteCache += writeCache;
+            
+            result.CXLPortReadMem[socket][p] = readMem;
+            result.CXLPortWriteMem[socket][p] = writeMem;
+            result.CXLPortReadCache[socket][p] = readCache;
+            result.CXLPortWriteCache[socket][p] = writeCache;
         }
+        result.CXLReadMem[socket] = CXLReadMem;
         result.CXLWriteMem[socket] = CXLWriteMem;
+        result.CXLReadCache[socket] = CXLReadCache;
         result.CXLWriteCache[socket] = CXLWriteCache;
     }
 }
