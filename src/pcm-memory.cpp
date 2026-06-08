@@ -1247,7 +1247,7 @@ class CHAEventCollector
         uint64 result = 0;
         for (uint32 i = 0; i < pcm->getNumSockets(); ++i)
         {
-            for (uint32 cbo = 0; cbo < pcm->getMaxNumOfUncorePMUs(PCM::CBO_PMU_ID); ++cbo)
+            for (uint32 cbo = 0; cbo < pcm->getMaxNumOfUncorePMUs(PCM::CBO_PMU_ID, i); ++cbo)
             {
                 for (uint32 ctr = 0; ctr < 4 && ctr < eventGroups[curGroup].size(); ++ctr)
                 {
