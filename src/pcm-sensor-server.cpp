@@ -344,6 +344,7 @@ class CXLSysReadBWCollector
     PCM* pcm_ = nullptr;
     std::vector<std::vector<ServerUncoreCounterState> > midStates_;
     std::vector<ServerUncoreCounterState> beforeState_;
+    std::chrono::steady_clock::time_point beforeTime_;
     bool initialized_ = false;
     std::atomic<bool> enabled_{false};
     std::atomic<double> latestReadBps_{0.0};
@@ -465,6 +466,7 @@ public:
 
         programGroup(0);
         readState(beforeState_);
+        beforeTime_ = std::chrono::steady_clock::now();
         enabled_.store(true, std::memory_order_release);
     }
 
@@ -503,13 +505,16 @@ public:
 
         std::this_thread::sleep_for(std::chrono::duration<double>(groupDelay));
         std::vector<ServerUncoreCounterState> afterState(pcm_->getNumSockets());
+        const auto afterTime = std::chrono::steady_clock::now();
         readState(afterState);
         totalCount += extractCHATotalCount(eventGroups_.size() - 1, midStates_.back(), afterState);
 
-        latestReadBps_.store(calculateCXLSysReadBps(totalCount, eventGroups_.size(), sampleSeconds), std::memory_order_relaxed);
+        const double elapsedSeconds = std::chrono::duration<double>(afterTime - beforeTime_).count();
+        latestReadBps_.store(calculateCXLSysReadBps(totalCount, eventGroups_.size(), elapsedSeconds), std::memory_order_relaxed);
 
         programGroup(0);
         readState(beforeState_);
+        beforeTime_ = std::chrono::steady_clock::now();
     }
 };
 
