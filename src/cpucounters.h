@@ -5006,6 +5006,7 @@ uint64 getNumberOfCustomEvents(int32 eventCounterNr, const CounterStateType & be
 
 /*! \brief Computes number of bytes Read from CXL Cache
 
+    \param socket socket identifier
     \param before CPU counter state before the experiment
     \param after CPU counter state after the experiment
     \return Number of bytes
@@ -5018,6 +5019,7 @@ inline uint64 getCXLReadCacheBytes(uint32 socket,const SystemCounterState & befo
 
 /*! \brief Computes number of bytes Writen from CXL Cache
 
+    \param socket socket identifier
     \param before CPU counter state before the experiment
     \param after CPU counter state after the experiment
     \return Number of bytes
@@ -5025,11 +5027,12 @@ inline uint64 getCXLReadCacheBytes(uint32 socket,const SystemCounterState & befo
 //template <class CounterStateType>
 inline uint64 getCXLWriteCacheBytes(uint32 socket,const SystemCounterState & before,const SystemCounterState & after)
 {
-        return (after.CXLWriteCache[socket] - before.CXLWriteCache[socket]) * 64;
+    return (after.CXLWriteCache[socket] - before.CXLWriteCache[socket]) * 64;
 }
 
 /*! \brief Computes number of bytes Read from CXL Memory
 
+    \param socket socket identifier
     \param before CPU counter state before the experiment
     \param after CPU counter state after the experiment
     \return Number of bytes
@@ -5037,12 +5040,12 @@ inline uint64 getCXLWriteCacheBytes(uint32 socket,const SystemCounterState & bef
 //template <class CounterStateType>
 inline uint64 getCXLReadMemBytes(uint32 socket, const SystemCounterState & before,const SystemCounterState & after)
 {
-
     return (after.CXLReadMem[socket] - before.CXLReadMem[socket]) * 64;
 }
 
 /*! \brief Computes number of bytes Writen from CXL Memory
 
+    \param socket socket identifier
     \param before CPU counter state before the experiment
     \param after CPU counter state after the experiment
     \return Number of bytes
@@ -5050,8 +5053,7 @@ inline uint64 getCXLReadMemBytes(uint32 socket, const SystemCounterState & befor
 //template <class CounterStateType>
 inline uint64 getCXLWriteMemBytes(uint32 socket, const SystemCounterState & before,const SystemCounterState & after)
 {
-
-        return (after.CXLWriteMem[socket] - before.CXLWriteMem[socket]) * 64;
+    return (after.CXLWriteMem[socket] - before.CXLWriteMem[socket]) * 64;
 }
 
 /*! \brief Computes number of bytes Read from CXL Cache on a specific CXL port

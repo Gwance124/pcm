@@ -324,6 +324,182 @@ HTTPServer* SignalHandler::httpServer_ = nullptr;
 
 namespace pcm {
 
+class CXLSysReadBWCollector
+{
+    std::vector<eventGroup_t> eventGroups_;
+    PCM* pcm_ = nullptr;
+    std::vector<std::vector<ServerUncoreCounterState> > midStates_;
+    std::vector<ServerUncoreCounterState> beforeState_;
+    bool initialized_ = false;
+    std::atomic<bool> enabled_{false};
+    std::atomic<double> latestReadBps_{0.0};
+    std::mutex mutex_;
+
+    CXLSysReadBWCollector() = default;
+    CXLSysReadBWCollector(const CXLSysReadBWCollector&) = delete;
+    CXLSysReadBWCollector& operator = (const CXLSysReadBWCollector&) = delete;
+
+    uint64 extractCHATotalCount(const size_t group, const std::vector<ServerUncoreCounterState>& before, const std::vector<ServerUncoreCounterState>& after) const
+    {
+        uint64 result = 0;
+        for (uint32 socket = 0; socket < pcm_->getNumSockets(); ++socket)
+        {
+            for (uint32 cbo = 0; cbo < pcm_->getMaxNumOfUncorePMUs(PCM::CBO_PMU_ID, socket); ++cbo)
+            {
+                for (uint32 ctr = 0; ctr < 4 && ctr < eventGroups_[group].size(); ++ctr)
+                {
+                    result += getUncoreCounter(PCM::CBO_PMU_ID, cbo, ctr, before[socket], after[socket]);
+                }
+            }
+        }
+        return result;
+    }
+
+    void programGroup(const size_t group)
+    {
+        uint64 events[4] = { 0, 0, 0, 0 };
+        assert(group < eventGroups_.size());
+        for (size_t i = 0; i < 4 && i < eventGroups_[group].size(); ++i)
+        {
+            events[i] = eventGroups_[group][i];
+        }
+        pcm_->programCboRaw(events, 0, 0);
+    }
+
+    void readState(std::vector<ServerUncoreCounterState>& state) const
+    {
+        state.resize(pcm_->getNumSockets());
+        for (uint32 socket = 0; socket < pcm_->getNumSockets(); ++socket)
+        {
+            state[socket] = pcm_->getServerUncoreCounterState(socket);
+        }
+    }
+
+    void setupEventGroups()
+    {
+        switch (pcm_->getCPUFamilyModel())
+        {
+        case PCM::SPR:
+            eventGroups_ = {
+                {
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10C80B82) , // UNC_CHA_TOR_INSERTS.IA_MISS_CRDMORPH_CXL_ACC
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10c80782) , // UNC_CHA_TOR_INSERTS.IA_MISS_RFO_CXL_ACC
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10c81782) , // UNC_CHA_TOR_INSERTS.IA_MISS_DRD_CXL_ACC
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10C88782)   // UNC_CHA_TOR_INSERTS.IA_MISS_LLCPREFRFO_CXL_ACC
+                },
+                {
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10CCC782) , // UNC_CHA_TOR_INSERTS.IA_MISS_RFO_PREF_CXL_ACC
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10C89782) , // UNC_CHA_TOR_INSERTS.IA_MISS_DRD_PREF_CXL_ACC
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10CCD782) , // UNC_CHA_TOR_INSERTS.IA_MISS_LLCPREFDATA_CXL_ACC
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x10CCCF82)   // UNC_CHA_TOR_INSERTS.IA_MISS_LLCPREFCODE_CXL_ACC
+                }
+            };
+            break;
+        case PCM::EMR:
+            eventGroups_ = {
+                {
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x20C80682) , // UNC_CHA_TOR_INSERTS.IA_MISS_RFO_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x20C81682) , // UNC_CHA_TOR_INSERTS.IA_MISS_DRD_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x20C88682)   // UNC_CHA_TOR_INSERTS.IA_MISS_LLCPREFRFO_CXL_EXP_LOCAL
+                },
+                {
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x20CCC682) , // UNC_CHA_TOR_INSERTS.IA_MISS_RFO_PREF_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x20C89682) , // UNC_CHA_TOR_INSERTS.IA_MISS_DRD_PREF_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x01) + UNC_PMON_CTL_UMASK_EXT(0x20CCD682) , // UNC_CHA_TOR_INSERTS.IA_MISS_LLCPREFDATA_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x40) + UNC_PMON_CTL_UMASK_EXT(0x20E87E82)   // UNC_CHA_TOR_INSERTS.RRQ_MISS_INVXTOM_CXL_EXP_LOCAL
+                },
+                {
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x40) + UNC_PMON_CTL_UMASK_EXT(0x20E80682), // UNC_CHA_TOR_INSERTS.RRQ_MISS_RDCUR_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x40) + UNC_PMON_CTL_UMASK_EXT(0x20E80E82), // UNC_CHA_TOR_INSERTS.RRQ_MISS_RDCODE_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x40) + UNC_PMON_CTL_UMASK_EXT(0x20E81682), // UNC_CHA_TOR_INSERTS.RRQ_MISS_RDDATA_CXL_EXP_LOCAL
+                    UNC_PMON_CTL_EVENT(0x35) + UNC_PMON_CTL_UMASK(0x40) + UNC_PMON_CTL_UMASK_EXT(0x20E82682)  // UNC_CHA_TOR_INSERTS.RRQ_MISS_RDINVOWN_OPT_CXL_EXP_LOCAL
+                }
+            };
+            break;
+        default:
+            break;
+        }
+    }
+
+public:
+    static CXLSysReadBWCollector& getInstance()
+    {
+        static CXLSysReadBWCollector instance;
+        return instance;
+    }
+
+    void init(PCM* pcm)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (initialized_)
+            return;
+
+        pcm_ = pcm;
+        initialized_ = true;
+
+        if (pcm_ == nullptr || pcm_->nearMemoryMetricsAvailable())
+            return;
+
+        setupEventGroups();
+        if (eventGroups_.size() <= 1)
+            return;
+
+        beforeState_.resize(pcm_->getNumSockets());
+        midStates_.resize(eventGroups_.size() - 1);
+        for (auto& state : midStates_)
+            state.resize(pcm_->getNumSockets());
+
+        programGroup(0);
+        readState(beforeState_);
+        enabled_.store(true, std::memory_order_release);
+    }
+
+    bool enabled() const
+    {
+        return enabled_.load(std::memory_order_acquire);
+    }
+
+    double latestReadBps() const
+    {
+        return latestReadBps_.load(std::memory_order_relaxed);
+    }
+
+    void collect(const double sampleSeconds = 1.0)
+    {
+        if (enabled() == false || sampleSeconds <= 0.0)
+            return;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (enabled() == false)
+            return;
+
+        uint64 totalCount = 0;
+        const double groupDelay = sampleSeconds / double(eventGroups_.size());
+        for (size_t group = 0; group < eventGroups_.size() - 1; ++group)
+        {
+            std::this_thread::sleep_for(std::chrono::duration<double>(groupDelay));
+            readState(midStates_[group]);
+            const std::vector<ServerUncoreCounterState>* previousState = &beforeState_;
+            if (group > 0)
+                previousState = &midStates_[group - 1];
+            totalCount += extractCHATotalCount(group, *previousState, midStates_[group]);
+            programGroup(group + 1);
+            readState(midStates_[group]);
+        }
+
+        std::this_thread::sleep_for(std::chrono::duration<double>(groupDelay));
+        std::vector<ServerUncoreCounterState> afterState(pcm_->getNumSockets());
+        readState(afterState);
+        totalCount += extractCHATotalCount(eventGroups_.size() - 1, midStates_.back(), afterState);
+
+        const double bytes = double(eventGroups_.size()) * double(totalCount) * 64.0;
+        latestReadBps_.store(bytes / sampleSeconds, std::memory_order_relaxed);
+
+        programGroup(0);
+        readState(beforeState_);
+    }
+};
+
 class JSONPrinter : Visitor
 {
 public:
@@ -609,10 +785,13 @@ private:
         uint32 sockets = pcm->getNumSockets();
         uint32 links   = pcm->getQPILinksPerSocket();
         const bool showCXLReadMetrics = pcm->nearMemoryMetricsAvailable();
-        // Match pcm-memory's 0.5 CXL write bandwidth scaling on non-BHS platforms.
         const auto scaleCXLWriteBytes = [showCXLReadMetrics](uint64 bytes) {
-            return showCXLReadMetrics ? bytes : bytes / 2;
+            if ( showCXLReadMetrics == false )
+                bytes /= 2;
+            return bytes;
         };
+        if ( showCXLReadMetrics == false && CXLSysReadBWCollector::getInstance().enabled() )
+            printCounter( std::string( "System CXL Read Throughput Bytes Per Second" ), CXLSysReadBWCollector::getInstance().latestReadBps() );
         for ( uint32 i=0; i < sockets; ++i ) {
             startObject( std::string( "QPI Counters Socket " ) + std::to_string( i ), BEGIN_OBJECT );
             if ( showCXLReadMetrics )
@@ -620,7 +799,7 @@ private:
             printCounter( std::string( "CXL Write Cache" ), scaleCXLWriteBytes(getCXLWriteCacheBytes    (i, before, after)) );
             if ( showCXLReadMetrics )
                 printCounter( std::string( "CXL Read Mem"   ), getCXLReadMemBytes       (i,  before, after ) );
-            printCounter( std::string( "CXL Write Mem"  ), scaleCXLWriteBytes(getCXLWriteMemBytes   (i, before, after)) );
+            printCounter( std::string( "CXL Write Mem"  ), scaleCXLWriteBytes(getCXLWriteMemBytes       (i, before, after)) );
 
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ), getIncomingQPILinkBytes      ( i, j, before, after ) );
@@ -951,10 +1130,13 @@ private:
         uint32 sockets = pcm->getNumSockets();
         uint32 links   = pcm->getQPILinksPerSocket();
         const bool showCXLReadMetrics = pcm->nearMemoryMetricsAvailable();
-        // Match pcm-memory's 0.5 CXL write bandwidth scaling on non-BHS platforms.
         const auto scaleCXLWriteBytes = [showCXLReadMetrics](uint64 bytes) {
-            return showCXLReadMetrics ? bytes : bytes / 2;
+            if ( showCXLReadMetrics == false )
+                bytes /= 2;
+            return bytes;
         };
+        if ( showCXLReadMetrics == false && CXLSysReadBWCollector::getInstance().enabled() )
+            printCounter( std::string( "System CXL Read Throughput Bytes Per Second" ), CXLSysReadBWCollector::getInstance().latestReadBps() );
         for ( uint32 i=0; i < sockets; ++i ) {
             addToHierarchy( std::string( "socket=\"" ) + std::to_string( i ) + "\"" );
             if ( showCXLReadMetrics )
@@ -962,7 +1144,7 @@ private:
             printCounter( std::string( "CXL Write Cache" ), scaleCXLWriteBytes(getCXLWriteCacheBytes    (i, before, after)) );
             if ( showCXLReadMetrics )
                 printCounter( std::string( "CXL Read Mem"    ), getCXLReadMemBytes      (i,  before, after ) );
-            printCounter( std::string( "CXL Write Mem"   ), scaleCXLWriteBytes(getCXLWriteMemBytes    (i, before, after)) );
+            printCounter( std::string( "CXL Write Mem"   ), scaleCXLWriteBytes(getCXLWriteMemBytes      (i, before, after)) );
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ),                          getIncomingQPILinkBytes      ( i, j, before, after ) );
                 printCounter( std::string( "Outgoing Data And Non-Data Traffic On Link " ) + std::to_string( j ),             getOutgoingQPILinkBytes      ( i, j, before, after ) );
@@ -3495,6 +3677,7 @@ void PeriodicCounterFetcher::execute() {
             break;
         if ( run_ ) {
             auto before = steady_clock::now();
+            CXLSysReadBWCollector::getInstance().collect();
             // create an aggregator
             std::shared_ptr<Aggregator> sagp = std::make_shared<Aggregator>();
             assert(sagp.get());
@@ -4446,6 +4629,16 @@ int mainThrows(int argc, char * argv[]) {
 
         //TODO: check return value when its implemented  
         pcmInstance->programCXLCM();
+        bool hasCXLPorts = false;
+        for ( uint32 socket = 0; socket < pcmInstance->getNumSockets(); ++socket )
+        {
+            hasCXLPorts = hasCXLPorts || (pcmInstance->getNumCXLPorts(socket) > 0);
+        }
+        const auto cpuFamilyModel = pcmInstance->getCPUFamilyModel();
+        if ( (cpuFamilyModel == PCM::SPR || cpuFamilyModel == PCM::EMR) && hasCXLPorts )
+        {
+            CXLSysReadBWCollector::getInstance().init(pcmInstance);
+        }
 
         if (pcmInstance->getAccel()!=ACCEL_NOCONFIG)
         {
