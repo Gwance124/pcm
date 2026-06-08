@@ -324,6 +324,20 @@ HTTPServer* SignalHandler::httpServer_ = nullptr;
 
 namespace pcm {
 
+uint64 scaleCXLWriteBytes(uint64 bytes, const bool nearMemoryMetricsAvailable)
+{
+    if ( nearMemoryMetricsAvailable == false )
+        bytes /= 2;
+    return bytes;
+}
+
+double calculateCXLSysReadBps(const uint64 totalCount, const size_t eventGroupCount, const double sampleSeconds)
+{
+    if ( eventGroupCount == 0 || sampleSeconds <= 0.0 )
+        return 0.0;
+    return double(eventGroupCount) * double(totalCount) * 64.0 / sampleSeconds;
+}
+
 class CXLSysReadBWCollector
 {
     std::vector<eventGroup_t> eventGroups_;
@@ -492,8 +506,7 @@ public:
         readState(afterState);
         totalCount += extractCHATotalCount(eventGroups_.size() - 1, midStates_.back(), afterState);
 
-        const double bytes = double(eventGroups_.size()) * double(totalCount) * 64.0;
-        latestReadBps_.store(bytes / sampleSeconds, std::memory_order_relaxed);
+        latestReadBps_.store(calculateCXLSysReadBps(totalCount, eventGroups_.size(), sampleSeconds), std::memory_order_relaxed);
 
         programGroup(0);
         readState(beforeState_);
@@ -785,21 +798,16 @@ private:
         uint32 sockets = pcm->getNumSockets();
         uint32 links   = pcm->getQPILinksPerSocket();
         const bool showCXLReadMetrics = pcm->nearMemoryMetricsAvailable();
-        const auto scaleCXLWriteBytes = [showCXLReadMetrics](uint64 bytes) {
-            if ( showCXLReadMetrics == false )
-                bytes /= 2;
-            return bytes;
-        };
         if ( showCXLReadMetrics == false && CXLSysReadBWCollector::getInstance().enabled() )
             printCounter( std::string( "System CXL Read Throughput Bytes Per Second" ), CXLSysReadBWCollector::getInstance().latestReadBps() );
         for ( uint32 i=0; i < sockets; ++i ) {
             startObject( std::string( "QPI Counters Socket " ) + std::to_string( i ), BEGIN_OBJECT );
             if ( showCXLReadMetrics )
                 printCounter( std::string( "CXL Read Cache"  ), getCXLReadCacheBytes    (i,  before, after ) );
-            printCounter( std::string( "CXL Write Cache" ), scaleCXLWriteBytes(getCXLWriteCacheBytes    (i, before, after)) );
+            printCounter( std::string( "CXL Write Cache" ), scaleCXLWriteBytes( getCXLWriteCacheBytes    (i, before, after), showCXLReadMetrics) );
             if ( showCXLReadMetrics )
                 printCounter( std::string( "CXL Read Mem"   ), getCXLReadMemBytes       (i,  before, after ) );
-            printCounter( std::string( "CXL Write Mem"  ), scaleCXLWriteBytes(getCXLWriteMemBytes       (i, before, after)) );
+            printCounter( std::string( "CXL Write Mem"  ), scaleCXLWriteBytes( getCXLWriteMemBytes    (i, before, after), showCXLReadMetrics) );
 
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ), getIncomingQPILinkBytes      ( i, j, before, after ) );
@@ -1130,21 +1138,16 @@ private:
         uint32 sockets = pcm->getNumSockets();
         uint32 links   = pcm->getQPILinksPerSocket();
         const bool showCXLReadMetrics = pcm->nearMemoryMetricsAvailable();
-        const auto scaleCXLWriteBytes = [showCXLReadMetrics](uint64 bytes) {
-            if ( showCXLReadMetrics == false )
-                bytes /= 2;
-            return bytes;
-        };
         if ( showCXLReadMetrics == false && CXLSysReadBWCollector::getInstance().enabled() )
             printCounter( std::string( "System CXL Read Throughput Bytes Per Second" ), CXLSysReadBWCollector::getInstance().latestReadBps() );
         for ( uint32 i=0; i < sockets; ++i ) {
             addToHierarchy( std::string( "socket=\"" ) + std::to_string( i ) + "\"" );
             if ( showCXLReadMetrics )
                 printCounter( std::string( "CXL Read Cache"  ), getCXLReadCacheBytes    (i,  before, after ) );
-            printCounter( std::string( "CXL Write Cache" ), scaleCXLWriteBytes(getCXLWriteCacheBytes    (i, before, after)) );
+            printCounter( std::string( "CXL Write Cache" ), scaleCXLWriteBytes( getCXLWriteCacheBytes   (i, before, after), showCXLReadMetrics) );
             if ( showCXLReadMetrics )
                 printCounter( std::string( "CXL Read Mem"    ), getCXLReadMemBytes      (i,  before, after ) );
-            printCounter( std::string( "CXL Write Mem"   ), scaleCXLWriteBytes(getCXLWriteMemBytes      (i, before, after)) );
+            printCounter( std::string( "CXL Write Mem"   ), scaleCXLWriteBytes( getCXLWriteMemBytes   (i, before, after), showCXLReadMetrics) );
             for ( uint32 j=0; j < links; ++j ) {
                 printCounter( std::string( "Incoming Data Traffic On Link " ) + std::to_string( j ),                          getIncomingQPILinkBytes      ( i, j, before, after ) );
                 printCounter( std::string( "Outgoing Data And Non-Data Traffic On Link " ) + std::to_string( j ),             getOutgoingQPILinkBytes      ( i, j, before, after ) );
